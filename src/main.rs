@@ -78,9 +78,9 @@ impl AssetDownloader {
         stream! {
             for await rel in aiter_until_error(tasks) {
                 match rel {
-                    Ok(Some(r)) => {yield Ok(r); }
-                    Ok(None) => {continue;}
-                    Err(e) => {yield Err(e); }
+                    Ok(Some(r)) => yield Ok(r),
+                    Ok(None) => (),
+                    Err(e) => yield Err(e),
                 }
             }
         }
