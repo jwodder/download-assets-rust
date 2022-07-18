@@ -19,7 +19,7 @@ use tokio_stream::{Stream, StreamExt};
 
 /// A client for asynchronously downloading release assets of a given GitHub
 /// repository
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct AssetDownloader {
     /// The reqwest client object
     client: Client,
@@ -56,16 +56,16 @@ impl AssetDownloader {
         &self,
         tags: Vec<String>,
     ) -> impl Stream<Item = Result<Release, anyhow::Error>> {
+        let mut tasks = JoinSet::new();
+        for t in tags {
+            let downloader = self.clone();
+            tasks.spawn(async move { downloader.get_release(&t).await });
+        }
         stream! {
-            let mut tasks = JoinSet::new();
-            for t in tags {
-                let downloader = self.clone();
-                tasks.spawn(async move { downloader.get_release(&t).await })
-            }
             for await rel in aiter_until_error(tasks) {
                 match rel {
                     Ok(Some(r)) => {yield Ok(r); }
-                    Ok(None) => {}
+                    Ok(None) => {continue;}
                     Err(e) => {yield Err(e); }
                 }
             }
@@ -75,10 +75,12 @@ impl AssetDownloader {
     /// Paginate through the repository's releases and yield each one
     fn get_all_releases(&self) -> impl Stream<Item = Result<Release, anyhow::Error>> {
         info!("Fetching all releases for {}", self.repo);
+        let repo = self.repo.clone();
+        let client = self.client.clone();
         try_stream! {
-            let mut url = Some(format!("{}/releases", self.repo.api_url()));
+            let mut url = Some(format!("{}/releases", repo.api_url()));
             while let Some(u) = url {
-                let r = StatusError::error_for_status(self.client.get(u).send().await?).await?;
+                let r = StatusError::error_for_status(client.get(u).send().await?).await?;
                 url = get_next_link(&r);
                 for rel in r.json::<Vec<Release>>().await? {
                     yield rel;
@@ -96,7 +98,7 @@ impl AssetDownloader {
     ///
     /// If an unexpected error occurs while downloading some file, all
     /// remaining downloads are cancelled.
-    async fn download_release_assets<S>(&self, releaseiter: S) -> Result<bool, anyhow::Error>
+    async fn download_release_assets<S>(&self, mut releaseiter: S) -> Result<bool, anyhow::Error>
     where
         S: Stream<Item = Result<Release, anyhow::Error>> + std::marker::Unpin,
     {
@@ -111,7 +113,7 @@ impl AssetDownloader {
                         info!(
                             "Found release {} with assets: {}",
                             rel.tag_name,
-                            rel.assets.iter().map(|asset| asset.name).join(", ")
+                            rel.assets.iter().map(|asset| &asset.name).join(", ")
                         );
                         releases.push(rel);
                     } else {
@@ -294,12 +296,13 @@ async fn main() -> ExitCode {
         Either::Right(downloader.get_many_releases(args.tags))
     };
     // TODO: Use select! with a cntrl-c listener here:
+    tokio::pin!(releases);
     match downloader.download_release_assets(releases).await {
-        Ok(true) => return ExitCode::SUCCESS,
-        Ok(false) => return ExitCode::FAILURE,
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
         Err(e) => {
             error!("{e}");
-            return ExitCode::FAILURE;
+            ExitCode::FAILURE
         }
     }
 }
@@ -320,7 +323,7 @@ fn aiter_until_error<T: 'static, E: 'static>(
                 },
                 Err(_) => {
                     tasks.shutdown().await;
-                    // TODO: Yield some error?
+                    // TODO: Yield or report some error?
                     break;
                 }
             }
@@ -351,7 +354,7 @@ impl StatusError {
 
 impl std::fmt::Display for StatusError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self.body {
+        match &self.body {
             Some(text) => write!(
                 f,
                 "Request to {} returned {}: {}\n\n{}\n",
@@ -374,14 +377,8 @@ impl std::fmt::Display for StatusError {
 impl std::error::Error for StatusError {}
 
 fn get_next_link(r: &Response) -> Option<String> {
-    match r.headers().get(LINK) {
-        Some(value) => match value.to_str() {
-            Ok(value) => match parse_link_header::parse_with_rel(value) {
-                Ok(links) => links.get("next").map(|ln| ln.raw_uri),
-                Err(_) => None,
-            },
-            Err(_) => None,
-        },
-        None => None,
-    }
+    let header_value = r.headers().get(LINK)?.to_str().ok()?;
+    parse_link_header::parse_with_rel(header_value)
+        .ok()
+        .and_then(|links| links.get("next").map(|ln| ln.raw_uri.clone()))
 }
