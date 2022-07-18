@@ -6,8 +6,13 @@ use ghrepo::GHRepo;
 use indent_write::indentable::Indentable;
 use itertools::Itertools; // for .join()
 use log::{error, info, warn, LevelFilter};
-use reqwest::{header::LINK, Client, Response};
+use mime::{Mime, JSON};
+use reqwest::{
+    header::{CONTENT_TYPE, LINK},
+    Client, Response,
+};
 use serde::Deserialize;
+use serde_json::{to_string_pretty, value::Value};
 use std::env::current_dir;
 use std::io::stderr;
 use std::path::PathBuf;
@@ -356,8 +361,15 @@ impl StatusError {
         let status = r.status();
         if status.is_client_error() || status.is_server_error() {
             let url = r.url().clone();
-            // TODO: If the response body is JSON, pretty-print it.
-            let body = r.text().await.ok();
+            // If the response body is JSON, pretty-print it.
+            let body = if is_json_response(&r) {
+                r.json::<Value>()
+                    .await
+                    .ok()
+                    .map(|v| to_string_pretty(&v).unwrap())
+            } else {
+                r.text().await.ok()
+            };
             Err(StatusError { url, status, body })
         } else {
             Ok(r)
@@ -394,4 +406,18 @@ fn get_next_link(r: &Response) -> Option<String> {
     parse_link_header::parse_with_rel(header_value)
         .ok()
         .and_then(|links| links.get("next").map(|ln| ln.raw_uri.clone()))
+}
+
+fn is_json_response(r: &Response) -> bool {
+    match r
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<Mime>().ok())
+    {
+        Some(ct) => {
+            ct.type_() == "application" && (ct.subtype() == "json" || ct.suffix() == Some(JSON))
+        }
+        None => false,
+    }
 }

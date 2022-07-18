@@ -20,8 +20,10 @@ ghrepo = "0.1.0"
 indent_write = "2.2.0"
 itertools = "0.10.3"
 log = "0.4.17"
+mime = "0.3.16"
 parse_link_header = "0.3.2"
 reqwest = { version = "0.11.11", features = ["json", "stream"] }
 serde = { version = "1.0.139", features = ["derive"] }
+serde_json = "1.0.82"
 tokio = { version = "1.20.0", features = ["fs", "io-util", "macros", "rt", "rt-multi-thread"] }
 tokio-stream = "0.1.9"

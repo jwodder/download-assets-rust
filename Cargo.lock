@@ -162,9 +162,11 @@ dependencies = [
  "indent_write",
  "itertools",
  "log",
+ "mime",
  "parse_link_header",
  "reqwest",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-stream",
 ]
