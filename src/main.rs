@@ -15,10 +15,12 @@ use serde::Deserialize;
 use serde_json::{to_string_pretty, value::Value};
 use std::env::current_dir;
 use std::io::stderr;
-use std::path::PathBuf;
+use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use tokio::fs::{create_dir_all, remove_file, File};
+use tokio::fs::{create_dir_all, File};
 use tokio::io::AsyncWriteExt;
+use tokio::signal::ctrl_c;
 use tokio::task::JoinSet;
 use tokio_stream::{Stream, StreamExt};
 
@@ -170,8 +172,8 @@ impl AssetDownloader {
 
     /// Download the given asset belonging to the given release.
     ///
-    /// If an error occurs, the download file is deleted.
-    // TODO: Look for a way to delete the file if the task is cancelled.
+    /// If an error occurs or if the task is cancelled, the download file is
+    /// deleted.
     async fn download_asset(&self, release: Release, asset: Asset) -> Result<bool, anyhow::Error> {
         let parent = self.download_dir.join(&release.tag_name);
         let target = parent.join(&asset.name);
@@ -194,7 +196,7 @@ impl AssetDownloader {
             }
         };
         let mut downloaded = 0;
-        let mut fp = match File::create(&target).await {
+        let mut fp = match PotentialFile::new(&target).await {
             Ok(f) => f,
             Err(e) => {
                 error!("Error opening {}: {e}", target.display());
@@ -207,7 +209,6 @@ impl AssetDownloader {
                 Ok(chunk) => {
                     if let Err(e) = fp.write(&chunk).await {
                         error!("Error writing to {}: {e}", target.display());
-                        let _ = remove_file(target);
                         return Err(e.into());
                     }
                     downloaded += chunk.len();
@@ -222,11 +223,11 @@ impl AssetDownloader {
                 }
                 Err(e) => {
                     error!("Error reading data from {}: {e}", &asset.download_url);
-                    let _ = remove_file(target);
                     return Err(e.into());
                 }
             }
         }
+        fp.realize();
         info!(
             "{}: {} saved to {}",
             &release.tag_name,
@@ -313,13 +314,20 @@ async fn main() -> ExitCode {
     } else {
         Either::Right(downloader.get_many_releases(args.tags))
     };
-    // TODO: Use select! with a cntrl-c listener here:
     tokio::pin!(releases);
-    match downloader.download_release_assets(releases).await {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::FAILURE,
-        Err(e) => {
-            error!("{e}");
+    tokio::select! {
+        r = downloader.download_release_assets(releases) => {
+            match r {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::FAILURE,
+                Err(e) => {
+                    error!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        },
+        _ = ctrl_c() => {
+            info!("Ctrl-C received; cancelling downloads");
             ExitCode::FAILURE
         }
     }
@@ -412,5 +420,59 @@ fn is_json_response(r: &Response) -> bool {
             ct.type_() == "application" && (ct.subtype() == "json" || ct.suffix() == Some(JSON))
         }
         None => false,
+    }
+}
+
+/// A wrapper around a writable [`tokio::fs::File`] that deletes the file on
+/// drop if `realize()` has not been called
+struct PotentialFile {
+    path: PathBuf,
+    file: Option<File>,
+}
+
+impl PotentialFile {
+    async fn new<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
+        let file = Some(File::create(&path).await?);
+        Ok(PotentialFile {
+            path: path.as_ref().into(),
+            file,
+        })
+    }
+
+    fn realize(&mut self) {
+        self.file.take();
+    }
+}
+
+impl Deref for PotentialFile {
+    type Target = File;
+
+    fn deref(&self) -> &File {
+        self.file
+            .as_ref()
+            .expect("Cannot use PotentialFile after calling realize()")
+    }
+}
+
+impl DerefMut for PotentialFile {
+    fn deref_mut(&mut self) -> &mut File {
+        self.file
+            .as_mut()
+            .expect("Cannot use PotentialFile after calling realize()")
+    }
+}
+
+impl Drop for PotentialFile {
+    fn drop(&mut self) {
+        match self.file.take() {
+            Some(f) => {
+                drop(f);
+                match std::fs::remove_file(&self.path) {
+                    Ok(_) => (),
+                    Err(e) => warn!("Failed to remove {}: {e}", self.path.display()),
+                }
+            }
+            None => (),
+        }
     }
 }
