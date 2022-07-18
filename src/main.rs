@@ -382,19 +382,12 @@ impl std::fmt::Display for StatusError {
         match &self.body {
             Some(text) => write!(
                 f,
-                "Request to {} returned {}: {}\n\n{}\n",
+                "Request to {} returned {}\n\n{}\n",
                 self.url,
                 self.status,
-                self.status.canonical_reason().unwrap_or("<Unknown Reason>"),
                 text.indented("    "),
             ),
-            None => write!(
-                f,
-                "Request to {} returned {}: {}",
-                self.url,
-                self.status,
-                self.status.canonical_reason().unwrap_or("<Unknown Reason>"),
-            ),
+            None => write!(f, "Request to {} returned {}", self.url, self.status),
         }
     }
 }
