@@ -249,6 +249,7 @@ struct Release {
 #[derive(Clone, Debug, Deserialize)]
 struct Asset {
     name: String,
+    #[serde(rename = "browser_download_url")]
     download_url: String,
     size: u64,
 }
