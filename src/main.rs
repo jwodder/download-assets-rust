@@ -48,8 +48,16 @@ struct AssetDownloader {
 }
 
 impl AssetDownloader {
-    /// Fetch the details for the release with the given tag from the API.  If
-    /// there is no such release, returns `None`.
+    /// Fetch the details for the release with the given tag from the GitHub
+    /// API.
+    ///
+    /// If there is no such release, this returns `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// This will return a [`reqwest::Error`] if the HTTP request fails or if
+    /// the response body cannot be decoded.  It will return a [`StatusError`]
+    /// if the response has a 4xx or 5xx status code other than 404.
     async fn get_release(&self, tag: &str) -> Result<Option<Release>, anyhow::Error> {
         info!("Fetching details on release {tag}");
         let r = self
@@ -65,9 +73,16 @@ impl AssetDownloader {
         Ok(Some(r.json::<Release>().await?))
     }
 
-    /// Returns a stream of `Release` objects for the given tags.  Tags which
-    /// do not correspond to an extant release are discarded.  If an error
-    /// occurs, pending retrievals are cancelled, and the error is reraised.
+    /// Returns a stream of `Release` objects for the given tags.
+    ///
+    /// Tags which do not correspond to an extant release are discarded.
+    ///
+    /// If an error is encountered, pending retrievals are cancelled, and the
+    /// error will be the last item yielded.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`get_release()`].
     fn get_many_releases(
         &self,
         tags: Vec<String>,
@@ -89,6 +104,12 @@ impl AssetDownloader {
     }
 
     /// Paginate through the repository's releases and yield each one
+    ///
+    /// # Errors
+    ///
+    /// This will return a [`reqwest::Error`] if an HTTP request fails or if a
+    /// response body cannot be decoded.  It will return a [`StatusError`] if a
+    /// response has a 4xx or 5xx status code.
     fn get_all_releases(&self) -> impl Stream<Item = Result<Release, anyhow::Error>> {
         info!("Fetching all releases for {}", self.repo);
         let repo = self.repo.clone();
@@ -105,15 +126,19 @@ impl AssetDownloader {
         }
     }
 
-    /// Download the assets for the given releases.  Returns `true` iff all
-    /// downloads completed successfully.
+    /// Download the assets for the given releases.
     ///
-    /// If an HTTP error occurs while iterating over `releaseiter()`, it is
-    /// logged and the method returns `False` without downloading anything.
-    /// Non-HTTP errors propagate out.
+    /// Returns `Ok(true)` iff all downloads completed successfully.
+    ///
+    /// If an error occurs while iterating over `releaseiter`, the error is
+    /// logged and the method returns `false` without downloading anything.
     ///
     /// If an unexpected error occurs while downloading some file, all
-    /// remaining downloads are cancelled.
+    /// remaining downloads are cancelled and the error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`download_asset()`].
     async fn download_release_assets<S>(&self, mut releaseiter: S) -> Result<bool, anyhow::Error>
     where
         S: Stream<Item = Result<Release, anyhow::Error>> + std::marker::Unpin,
@@ -172,8 +197,17 @@ impl AssetDownloader {
 
     /// Download the given asset belonging to the given release.
     ///
+    /// Returns `Ok(true)` iff the download completed successfully.
+    ///
     /// If an error occurs or if the task is cancelled, the download file is
     /// deleted.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`std::io::Error`] if an error occurs while writing data to
+    ///   the download file.
+    /// - Returns [`reqwest::Error`] if the HTTP request fails or an error
+    ///   occurs while downloading the body.
     async fn download_asset(&self, release: Release, asset: Asset) -> Result<bool, anyhow::Error> {
         let parent = self.download_dir.join(&release.tag_name);
         let target = parent.join(&asset.name);
@@ -333,8 +367,9 @@ async fn main() -> ExitCode {
     }
 }
 
-/// Given a list of tasks, yield their results as they become available.  If a
-/// task returns an error, all further tasks are cancelled.
+/// Given a set of tasks, yield their results as they become available.  If a
+/// task returns an error, all further tasks are cancelled, and the error will
+/// be the last item yielded.
 fn aiter_until_error<T: 'static, E: 'static>(
     mut tasks: JoinSet<Result<T, E>>,
 ) -> impl Stream<Item = Result<T, E>> {
@@ -358,6 +393,7 @@ fn aiter_until_error<T: 'static, E: 'static>(
     }
 }
 
+/// Error raised for a 4xx or 5xx HTTP response that includes the response body
 #[derive(Debug)]
 struct StatusError {
     url: reqwest::Url,
@@ -366,6 +402,8 @@ struct StatusError {
 }
 
 impl StatusError {
+    /// If the given response has a 4xx or 5xx status code, construct & return
+    /// a `StatusError`; otherwise, return the response unchanged.
     async fn error_for_status(r: Response) -> Result<Response, StatusError> {
         let status = r.status();
         if status.is_client_error() || status.is_server_error() {
@@ -403,6 +441,7 @@ impl std::fmt::Display for StatusError {
 
 impl std::error::Error for StatusError {}
 
+/// Return the "rel=next" URL, if any, from the response's "Link" header.
 fn get_next_link(r: &Response) -> Option<String> {
     let header_value = r.headers().get(LINK)?.to_str().ok()?;
     parse_link_header::parse_with_rel(header_value)
@@ -410,6 +449,8 @@ fn get_next_link(r: &Response) -> Option<String> {
         .and_then(|links| links.get("next").map(|ln| ln.raw_uri.clone()))
 }
 
+/// Returns `true` iff the response's Content-Type header indicates the body is
+/// JSON
 fn is_json_response(r: &Response) -> bool {
     match r
         .headers()
@@ -432,6 +473,7 @@ struct PotentialFile {
 }
 
 impl PotentialFile {
+    /// Create a new file at the given path
     async fn new<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
         let file = Some(File::create(&path).await?);
         Ok(PotentialFile {
@@ -440,6 +482,11 @@ impl PotentialFile {
         })
     }
 
+    /// Mark the file as no longer "potential", so that it will not be deleted
+    /// on drop.
+    ///
+    /// After calling this method, no other methods of the `PotentialFile` can
+    /// be used or else a panic will result.
     fn realize(&mut self) {
         self.file.take();
     }
