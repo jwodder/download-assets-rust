@@ -347,10 +347,11 @@ fn aiter_until_error<T: 'static, E: 'static>(
                     yield Err(e);
                     break;
                 },
-                Err(_) => {
-                    tasks.shutdown().await;
-                    // TODO: Yield or report some error?
-                    break;
+                Err(e) => {
+                    if e.is_panic() {
+                        tasks.shutdown().await;
+                        std::panic::resume_unwind(e.into_panic());
+                    }
                 }
             }
         }
