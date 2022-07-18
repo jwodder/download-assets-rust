@@ -484,10 +484,7 @@ impl PotentialFile {
 
     /// Mark the file as no longer "potential", so that it will not be deleted
     /// on drop.
-    ///
-    /// After calling this method, no other methods of the `PotentialFile` can
-    /// be used or else a panic will result.
-    fn realize(&mut self) {
+    fn realize(mut self) {
         self.file.take();
     }
 }
