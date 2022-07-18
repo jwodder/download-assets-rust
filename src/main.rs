@@ -17,6 +17,15 @@ use tokio::io::AsyncWriteExt;
 use tokio::task::JoinSet;
 use tokio_stream::{Stream, StreamExt};
 
+static USER_AGENT: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("CARGO_PKG_REPOSITORY"),
+    ")",
+);
+
 /// A client for asynchronously downloading release assets of a given GitHub
 /// repository
 #[derive(Clone, Debug)]
@@ -286,7 +295,10 @@ async fn main() -> ExitCode {
         None => current_dir().expect("Could not determine current directory"),
     };
     let downloader = AssetDownloader {
-        client: Client::new(),
+        client: Client::builder()
+            .user_agent(USER_AGENT)
+            .build()
+            .expect("Error creating client"),
         repo: args.repo,
         download_dir,
     };
