@@ -77,7 +77,7 @@ impl AssetDownloader {
     /// the response body cannot be decoded.  It will return a [`StatusError`]
     /// if the response has a 4xx or 5xx status code other than 404.
     async fn get_release(&self, tag: &str) -> Result<Option<Release>, anyhow::Error> {
-        info!("Fetching details on release {tag}");
+        info!("Fetching details for release {tag}");
         let r = self
             .client
             .get(format!("{}/releases/tags/{}", self.repo.api_url(), tag))
@@ -158,6 +158,7 @@ impl AssetDownloader {
         S: Stream<Item = Result<Release, anyhow::Error>>,
     {
         let mut releases = Vec::new();
+        let mut success = true;
         // We wait until after all releases have been fetched before calling
         // spawn() in order to properly "cancel" if any errors occur while
         // fetching.
@@ -178,9 +179,13 @@ impl AssetDownloader {
                 }
                 Err(e) => {
                     error!("{e}");
-                    return false;
+                    success = false;
                 }
             }
+        }
+        if !success {
+            info!("Not downloading anything due to errors fetching release data");
+            return false;
         }
         let mut tasks = JoinSet::new();
         for rel in releases {
