@@ -15,7 +15,6 @@ anyhow = "1.0.58"
 async-stream = "0.3.3"
 clap = { version = "3.2.12", default-features = false, features = ["derive", "std", "suggestions", "wrap_help"] }
 fern = "0.6.1"
-futures = "0.3.21"
 ghrepo = "0.1.0"
 indent_write = "2.2.0"
 itertools = "0.10.3"
@@ -27,3 +26,4 @@ serde = { version = "1.0.139", features = ["derive"] }
 serde_json = "1.0.82"
 tokio = { version = "1.20.0", features = ["fs", "io-util", "macros", "rt", "rt-multi-thread", "signal"] }
 tokio-stream = "0.1.9"
+tokio-util = "0.7.3"

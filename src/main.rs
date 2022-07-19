@@ -2,7 +2,6 @@ use anyhow::Context;
 use async_stream::{stream, try_stream};
 use clap::Parser;
 use fern::Dispatch;
-use futures::future::Either;
 use ghrepo::GHRepo;
 use indent_write::indentable::Indentable;
 use itertools::Itertools; // for .join()
@@ -24,6 +23,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::signal::ctrl_c;
 use tokio::task::JoinSet;
 use tokio_stream::{Stream, StreamExt};
+use tokio_util::either::Either;
 
 static USER_AGENT: &str = concat!(
     env!("CARGO_PKG_NAME"),
