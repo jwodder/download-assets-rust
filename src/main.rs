@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_stream::{stream, try_stream};
 use clap::Parser;
 use fern::Dispatch;
@@ -128,18 +129,11 @@ impl AssetDownloader {
 
     /// Download the assets for the given releases.
     ///
-    /// Returns `Ok(true)` iff all downloads completed successfully.
+    /// Returns `true` iff all downloads completed successfully.
     ///
     /// If an error occurs while iterating over `releaseiter`, the error is
     /// logged and the method returns `false` without downloading anything.
-    ///
-    /// If an unexpected error occurs while downloading some file, all
-    /// remaining downloads are cancelled and the error is returned.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors as [`download_asset()`].
-    async fn download_release_assets<S>(&self, releaseiter: S) -> Result<bool, anyhow::Error>
+    async fn download_release_assets<S>(&self, releaseiter: S) -> bool
     where
         S: Stream<Item = Result<Release, anyhow::Error>>,
     {
@@ -164,7 +158,7 @@ impl AssetDownloader {
                 }
                 Err(e) => {
                     error!("{e}");
-                    return Ok(false);
+                    return false;
                 }
             }
         }
@@ -179,37 +173,44 @@ impl AssetDownloader {
         }
         if tasks.is_empty() {
             info!("No assets to download");
-            return Ok(true);
+            return true;
         }
         let mut downloaded = 0;
         let mut failed = 0;
-        let stream = aiter_until_error(tasks);
-        tokio::pin!(stream);
-        while let Some(r) = stream.next().await {
+        while let Some(r) = tasks.join_next().await {
             match r {
-                Ok(true) => downloaded += 1,
-                Ok(false) => failed += 1,
-                Err(e) => return Err(e),
+                Ok(Ok(())) => downloaded += 1,
+                Ok(Err(e)) => {
+                    error!("{e:#}");
+                    failed += 1;
+                }
+                Err(e) => {
+                    if e.is_panic() {
+                        tasks.shutdown().await;
+                        std::panic::resume_unwind(e.into_panic());
+                    }
+                }
             }
         }
         info!("{downloaded} assets downloaded successfully, {failed} downloads failed");
-        Ok(failed == 0)
+        failed == 0
     }
 
     /// Download the given asset belonging to the given release.
-    ///
-    /// Returns `Ok(true)` iff the download completed successfully.
     ///
     /// If an error occurs or if the task is cancelled, the download file is
     /// deleted.
     ///
     /// # Errors
     ///
-    /// - Returns [`std::io::Error`] if an error occurs while writing data to
-    ///   the download file.
+    /// - Returns [`std::io::Error`] if an error occurs while creating the
+    ///   download file or one of its parent directories or while writing data
+    ///   to the file.
     /// - Returns [`reqwest::Error`] if the HTTP request fails or an error
     ///   occurs while downloading the body.
-    async fn download_asset(&self, release: Release, asset: Asset) -> Result<bool, anyhow::Error> {
+    /// - Returns [`StatusError`] if the HTTP response has a 4xx or 5xx status
+    ///   code.
+    async fn download_asset(&self, release: Release, asset: Asset) -> anyhow::Result<()> {
         let parent = self.download_dir.join(&release.tag_name);
         let target = parent.join(&asset.name);
         info!(
@@ -218,49 +219,31 @@ impl AssetDownloader {
             &asset.name,
             target.display()
         );
-        if let Err(e) = create_dir_all(&parent).await {
-            error!("Error creating {}: {e}", parent.display());
-            return Ok(false);
-        }
-        let r = self.client.get(&asset.download_url).send().await?;
-        let r = match StatusError::error_for_status(r).await {
-            Ok(r) => r,
-            Err(e) => {
-                error!("{e}");
-                return Ok(false);
-            }
-        };
+        create_dir_all(&parent)
+            .await
+            .with_context(|| format!("Error creating {}", parent.display()))?;
+        let r = StatusError::error_for_status(self.client.get(&asset.download_url).send().await?)
+            .await?;
         let mut downloaded = 0;
-        let mut fp = match PotentialFile::new(&target).await {
-            Ok(f) => f,
-            Err(e) => {
-                error!("Error opening {}: {e}", target.display());
-                return Ok(false);
-            }
-        };
+        let mut fp = PotentialFile::new(&target)
+            .await
+            .with_context(|| format!("Error opening {}", target.display()))?;
         let mut stream = r.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(chunk) => {
-                    if let Err(e) = fp.write(&chunk).await {
-                        error!("Error writing to {}: {e}", target.display());
-                        return Err(e.into());
-                    }
-                    downloaded += chunk.len();
-                    info!(
-                        "{}: {}: downloaded {} / {} bytes ({:.2}%)",
-                        &release.tag_name,
-                        &asset.name,
-                        downloaded,
-                        &asset.size,
-                        (downloaded as f64) / (asset.size as f64) * 100.0,
-                    );
-                }
-                Err(e) => {
-                    error!("Error reading data from {}: {e}", &asset.download_url);
-                    return Err(e.into());
-                }
-            }
+            let chunk = chunk
+                .with_context(|| format!("Error reading data from {}", &asset.download_url))?;
+            fp.write(&chunk)
+                .await
+                .with_context(|| format!("Error writing to {}", target.display()))?;
+            downloaded += chunk.len();
+            info!(
+                "{}: {}: downloaded {} / {} bytes ({:.2}%)",
+                &release.tag_name,
+                &asset.name,
+                downloaded,
+                &asset.size,
+                (downloaded as f64) / (asset.size as f64) * 100.0,
+            );
         }
         fp.realize();
         info!(
@@ -269,7 +252,7 @@ impl AssetDownloader {
             &asset.name,
             target.display()
         );
-        Ok(true)
+        Ok(())
     }
 }
 
@@ -351,13 +334,10 @@ async fn main() -> ExitCode {
     };
     tokio::select! {
         r = downloader.download_release_assets(releases) => {
-            match r {
-                Ok(true) => ExitCode::SUCCESS,
-                Ok(false) => ExitCode::FAILURE,
-                Err(e) => {
-                    error!("{e}");
-                    ExitCode::FAILURE
-                }
+            if r {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
             }
         },
         _ = ctrl_c() => {
