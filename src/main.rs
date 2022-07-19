@@ -1,20 +1,14 @@
 use anyhow::Context;
 use async_stream::try_stream;
 use clap::Parser;
-use fern::Dispatch;
 use ghrepo::GHRepo;
 use indent_write::indentable::Indentable;
 use itertools::Itertools; // for .join()
 use log::{error, info, warn, LevelFilter};
 use mime::{Mime, JSON};
-use reqwest::{
-    header::{CONTENT_TYPE, LINK},
-    Client, Response,
-};
+use reqwest::{Client, Response};
 use serde::Deserialize;
 use serde_json::{to_string_pretty, value::Value};
-use std::env::current_dir;
-use std::io::stderr;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -308,12 +302,12 @@ struct Arguments {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    Dispatch::new()
+    fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!("[{:<5}] {}", record.level(), message))
         })
         .level(LevelFilter::Info)
-        .chain(stderr())
+        .chain(std::io::stderr())
         .apply()
         .unwrap();
     let args = Arguments::parse();
@@ -323,7 +317,7 @@ async fn main() -> ExitCode {
     }
     let download_dir = match args.download_dir {
         Some(d) => d,
-        None => current_dir().expect("Could not determine current directory"),
+        None => std::env::current_dir().expect("Could not determine current directory"),
     };
     let downloader = AssetDownloader::new(args.repo, download_dir);
     let releases = if args.all {
@@ -396,7 +390,7 @@ impl std::error::Error for StatusError {}
 
 /// Return the "rel=next" URL, if any, from the response's "Link" header.
 fn get_next_link(r: &Response) -> Option<String> {
-    let header_value = r.headers().get(LINK)?.to_str().ok()?;
+    let header_value = r.headers().get(reqwest::header::LINK)?.to_str().ok()?;
     parse_link_header::parse_with_rel(header_value)
         .ok()
         .and_then(|links| links.get("next").map(|ln| ln.raw_uri.clone()))
@@ -406,7 +400,7 @@ fn get_next_link(r: &Response) -> Option<String> {
 /// JSON
 fn is_json_response(r: &Response) -> bool {
     r.headers()
-        .get(CONTENT_TYPE)
+        .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<Mime>().ok())
         .map(|ct| {
