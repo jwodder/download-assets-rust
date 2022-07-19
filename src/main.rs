@@ -139,14 +139,15 @@ impl AssetDownloader {
     /// # Errors
     ///
     /// Returns the same errors as [`download_asset()`].
-    async fn download_release_assets<S>(&self, mut releaseiter: S) -> Result<bool, anyhow::Error>
+    async fn download_release_assets<S>(&self, releaseiter: S) -> Result<bool, anyhow::Error>
     where
-        S: Stream<Item = Result<Release, anyhow::Error>> + std::marker::Unpin,
+        S: Stream<Item = Result<Release, anyhow::Error>>,
     {
         let mut releases = Vec::new();
         // We wait until after all releases have been fetched before calling
         // spawn() in order to properly "cancel" if any errors occur while
         // fetching.
+        tokio::pin!(releaseiter);
         while let Some(r) = releaseiter.next().await {
             match r {
                 Ok(rel) => {
