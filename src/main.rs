@@ -432,17 +432,14 @@ fn get_next_link(r: &Response) -> Option<String> {
 /// Returns `true` iff the response's Content-Type header indicates the body is
 /// JSON
 fn is_json_response(r: &Response) -> bool {
-    match r
-        .headers()
+    r.headers()
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<Mime>().ok())
-    {
-        Some(ct) => {
+        .map(|ct| {
             ct.type_() == "application" && (ct.subtype() == "json" || ct.suffix() == Some(JSON))
-        }
-        None => false,
-    }
+        })
+        .unwrap_or(false)
 }
 
 /// A wrapper around a writable [`tokio::fs::File`] that deletes the file on
