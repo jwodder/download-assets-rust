@@ -49,6 +49,23 @@ struct AssetDownloader {
 }
 
 impl AssetDownloader {
+    /// Construct a new `AssetDownloader` for the given repository and download
+    /// directory
+    ///
+    /// # Panics
+    ///
+    /// Panics if unable to build the [`reqwest::Client`]
+    fn new(repo: GHRepo, download_dir: PathBuf) -> Self {
+        AssetDownloader {
+            client: Client::builder()
+                .user_agent(USER_AGENT)
+                .build()
+                .expect("Error creating client"),
+            repo,
+            download_dir,
+        }
+    }
+
     /// Fetch the details for the release with the given tag from the GitHub
     /// API.
     ///
@@ -319,14 +336,7 @@ async fn main() -> ExitCode {
         Some(d) => d,
         None => current_dir().expect("Could not determine current directory"),
     };
-    let downloader = AssetDownloader {
-        client: Client::builder()
-            .user_agent(USER_AGENT)
-            .build()
-            .expect("Error creating client"),
-        repo: args.repo,
-        download_dir,
-    };
+    let downloader = AssetDownloader::new(args.repo, download_dir);
     let releases = if args.all {
         Either::Left(downloader.get_all_releases())
     } else {
