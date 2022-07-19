@@ -349,7 +349,6 @@ async fn main() -> ExitCode {
     } else {
         Either::Right(downloader.get_many_releases(args.tags))
     };
-    tokio::pin!(releases);
     tokio::select! {
         r = downloader.download_release_assets(releases) => {
             match r {
