@@ -95,9 +95,6 @@ impl AssetDownloader {
     ///
     /// Tags which do not correspond to an extant release are discarded.
     ///
-    /// If an error is encountered, pending retrievals are cancelled, and the
-    /// error will be the last item yielded.
-    ///
     /// # Errors
     ///
     /// Returns the same errors as [`get_release()`].
@@ -111,11 +108,17 @@ impl AssetDownloader {
             tasks.spawn(async move { downloader.get_release(&t).await });
         }
         stream! {
-            for await rel in aiter_until_error(tasks) {
-                match rel {
-                    Ok(Some(r)) => yield Ok(r),
-                    Ok(None) => (),
-                    Err(e) => yield Err(e),
+            while let Some(r) = tasks.join_next().await {
+                match r {
+                    Ok(Ok(Some(r))) => yield Ok(r),
+                    Ok(Ok(None)) => (),
+                    Ok(Err(e)) => yield Err(e),
+                    Err(e) => {
+                        if e.is_panic() {
+                            tasks.shutdown().await;
+                            std::panic::resume_unwind(e.into_panic());
+                        }
+                    }
                 }
             }
         }
@@ -353,32 +356,6 @@ async fn main() -> ExitCode {
         _ = ctrl_c() => {
             info!("Ctrl-C received; cancelling downloads");
             ExitCode::FAILURE
-        }
-    }
-}
-
-/// Given a set of tasks, yield their results as they become available.  If a
-/// task returns an error, all further tasks are cancelled, and the error will
-/// be the last item yielded.
-fn aiter_until_error<T: 'static, E: 'static>(
-    mut tasks: JoinSet<Result<T, E>>,
-) -> impl Stream<Item = Result<T, E>> {
-    stream! {
-        while let Some(r) = tasks.join_next().await {
-            match r {
-                Ok(Ok(r)) => yield Ok(r),
-                Ok(Err(e)) => {
-                    tasks.shutdown().await;
-                    yield Err(e);
-                    break;
-                },
-                Err(e) => {
-                    if e.is_panic() {
-                        tasks.shutdown().await;
-                        std::panic::resume_unwind(e.into_panic());
-                    }
-                }
-            }
         }
     }
 }
