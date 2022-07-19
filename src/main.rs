@@ -1,5 +1,5 @@
 use anyhow::Context;
-use async_stream::{stream, try_stream};
+use async_stream::try_stream;
 use clap::Parser;
 use fern::Dispatch;
 use ghrepo::GHRepo;
@@ -21,8 +21,8 @@ use std::process::ExitCode;
 use tokio::fs::{create_dir_all, File};
 use tokio::io::AsyncWriteExt;
 use tokio::signal::ctrl_c;
-use tokio::task::JoinSet;
-use tokio_stream::{Stream, StreamExt};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tokio_util::either::Either;
 
 static USER_AGENT: &str = concat!(
@@ -102,26 +102,12 @@ impl AssetDownloader {
         &self,
         tags: Vec<String>,
     ) -> impl Stream<Item = Result<Release, anyhow::Error>> {
-        let mut tasks = JoinSet::new();
+        let mut tasks = TaskStream::new(32);
         for t in tags {
             let downloader = self.clone();
             tasks.spawn(async move { downloader.get_release(&t).await });
         }
-        stream! {
-            while let Some(r) = tasks.join_next().await {
-                match r {
-                    Ok(Ok(Some(r))) => yield Ok(r),
-                    Ok(Ok(None)) => (),
-                    Ok(Err(e)) => yield Err(e),
-                    Err(e) => {
-                        if e.is_panic() {
-                            tasks.shutdown().await;
-                            std::panic::resume_unwind(e.into_panic());
-                        }
-                    }
-                }
-            }
-        }
+        tasks.into_stream().filter_map(|r| r.transpose())
     }
 
     /// Paginate through the repository's releases and yield each one
@@ -187,7 +173,7 @@ impl AssetDownloader {
             info!("Not downloading anything due to errors fetching release data");
             return false;
         }
-        let mut tasks = JoinSet::new();
+        let mut tasks = TaskStream::new(32);
         for rel in releases {
             for asset in &rel.assets {
                 let downloader = self.clone();
@@ -202,18 +188,13 @@ impl AssetDownloader {
         }
         let mut downloaded = 0;
         let mut failed = 0;
-        while let Some(r) = tasks.join_next().await {
+        let mut stream = tasks.into_stream();
+        while let Some(r) = stream.next().await {
             match r {
-                Ok(Ok(())) => downloaded += 1,
-                Ok(Err(e)) => {
+                Ok(()) => downloaded += 1,
+                Err(e) => {
                     error!("{e:#}");
                     failed += 1;
-                }
-                Err(e) => {
-                    if e.is_panic() {
-                        tasks.shutdown().await;
-                        std::panic::resume_unwind(e.into_panic());
-                    }
                 }
             }
         }
@@ -488,5 +469,53 @@ impl Drop for PotentialFile {
             }
             None => (),
         }
+    }
+}
+
+/// A struct for spawning tasks and collecting their return values as they
+/// complete in a stream
+struct TaskStream<T> {
+    sender: Sender<T>,
+    receiver: Receiver<T>,
+    empty: bool,
+}
+
+impl<T> TaskStream<T> {
+    /// Create a new `TaskStream`
+    ///
+    /// `buffer` is the message queue size to use for the internal mpsc
+    /// channel.
+    fn new(buffer: usize) -> Self {
+        let (sender, receiver) = channel(buffer);
+        TaskStream {
+            sender,
+            receiver,
+            empty: true,
+        }
+    }
+
+    /// Test whether any tasks have been spawned in this `TaskStream`
+    fn is_empty(&self) -> bool {
+        self.empty
+    }
+
+    /// Convert the `TaskStream` into a stream of its spawned tasks' return
+    /// values
+    fn into_stream(self) -> impl Stream<Item = T> {
+        drop(self.sender);
+        ReceiverStream::new(self.receiver)
+    }
+}
+
+impl<T: 'static> TaskStream<T> {
+    /// Spawn a task to return the output of via the stream
+    fn spawn<F>(&mut self, fut: F)
+    where
+        F: std::future::Future<Output = T> + Send + 'static,
+        T: Send,
+    {
+        let sender = self.sender.clone();
+        tokio::spawn(async move { sender.send(fut.await).await });
+        self.empty = false;
     }
 }
