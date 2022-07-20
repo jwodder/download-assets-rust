@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::signal::ctrl_c;
 use tokio_util::either::Either;
 
-/// Download the release assets for the given tags of the given GitHub
+/// Download the release assets for the given releases of the given GitHub
 /// repository
 #[derive(Parser)]
 struct Arguments {
