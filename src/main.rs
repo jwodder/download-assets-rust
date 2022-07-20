@@ -8,6 +8,7 @@ use ghrepo::GHRepo;
 use log::{error, LevelFilter};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use tokio::signal::ctrl_c;
 use tokio_util::either::Either;
 
@@ -52,7 +53,7 @@ async fn main() -> ExitCode {
         Some(d) => d,
         None => std::env::current_dir().expect("Could not determine current directory"),
     };
-    let downloader = AssetDownloader::new(args.repo, download_dir);
+    let downloader = Arc::new(AssetDownloader::new(args.repo, download_dir));
     let releases = if args.all {
         Either::Left(downloader.get_all_releases())
     } else {

@@ -9,6 +9,7 @@ use log::{error, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::create_dir_all;
 use tokio::io::AsyncWriteExt;
 use tokio_stream::{Stream, StreamExt};
@@ -87,12 +88,12 @@ impl AssetDownloader {
     ///
     /// Returns the same errors as [`get_release()`].
     pub fn get_many_releases(
-        &self,
+        self: &Arc<Self>,
         tags: Vec<String>,
     ) -> impl Stream<Item = Result<Release, anyhow::Error>> {
         let mut tasks = TaskStream::new(32);
         for t in tags {
-            let downloader = self.clone();
+            let downloader = Arc::clone(self);
             tasks.spawn(async move { downloader.get_release(&t).await });
         }
         tasks.into_stream().filter_map(|r| r.transpose())
@@ -127,7 +128,7 @@ impl AssetDownloader {
     ///
     /// If an error occurs while iterating over `releaseiter`, the error is
     /// logged and the method returns `false` without downloading anything.
-    pub async fn download_release_assets<S>(&self, releaseiter: S) -> bool
+    pub async fn download_release_assets<S>(self: &Arc<Self>, releaseiter: S) -> bool
     where
         S: Stream<Item = Result<Release, anyhow::Error>>,
     {
@@ -164,7 +165,7 @@ impl AssetDownloader {
         let mut tasks = TaskStream::new(32);
         for rel in releases {
             for asset in &rel.assets {
-                let downloader = self.clone();
+                let downloader = Arc::clone(self);
                 let rel = rel.clone();
                 let asset = asset.clone();
                 tasks.spawn(async move { downloader.download_asset(rel, asset).await });
