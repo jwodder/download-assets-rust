@@ -36,16 +36,11 @@ impl StatusError {
 
 impl std::fmt::Display for StatusError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match &self.body {
-            Some(text) => write!(
-                f,
-                "Request to {} returned {}\n\n{}\n",
-                self.url,
-                self.status,
-                text.indented("    "),
-            ),
-            None => write!(f, "Request to {} returned {}", self.url, self.status),
+        write!(f, "Request to {} returned {}", self.url, self.status)?;
+        if let Some(text) = &self.body {
+            write!(f, "\n\n{}\n", text.indented("    "))?;
         }
+        Ok(())
     }
 }
 
