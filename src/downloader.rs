@@ -153,7 +153,7 @@ impl AssetDownloader {
                     }
                 }
                 Err(e) => {
-                    error!("{e}");
+                    error!("{e:#}");
                     success = false;
                 }
             }
