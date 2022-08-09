@@ -227,7 +227,7 @@ impl AssetDownloader {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk
                 .with_context(|| format!("Error reading data from {}", &asset.download_url))?;
-            fp.write(&chunk)
+            fp.write_all(&chunk)
                 .await
                 .with_context(|| format!("Error writing to {}", target.display()))?;
             downloaded += chunk.len();
