@@ -47,15 +47,11 @@ impl DerefMut for PotentialFile {
 
 impl Drop for PotentialFile {
     fn drop(&mut self) {
-        match self.file.take() {
-            Some(f) => {
-                drop(f);
-                match std::fs::remove_file(&self.path) {
-                    Ok(_) => (),
-                    Err(e) => warn!("Failed to remove {}: {e}", self.path.display()),
-                }
+        if let Some(f) = self.file.take() {
+            drop(f);
+            if let Err(e) = std::fs::remove_file(&self.path) {
+                warn!("Failed to remove {}: {e}", self.path.display());
             }
-            None => (),
         }
     }
 }
