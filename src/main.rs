@@ -48,10 +48,9 @@ async fn main() -> ExitCode {
         eprintln!("No tags specified on command line");
         return ExitCode::FAILURE;
     }
-    let download_dir = match args.download_dir {
-        Some(d) => d,
-        None => std::env::current_dir().expect("Could not determine current directory"),
-    };
+    let download_dir = args
+        .download_dir
+        .unwrap_or_else(|| std::env::current_dir().expect("Could not determine current directory"));
     let downloader = Arc::new(AssetDownloader::new(args.repo, download_dir));
     let releases = if args.all {
         Either::Left(downloader.get_all_releases())

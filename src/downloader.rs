@@ -132,11 +132,8 @@ impl AssetDownloader {
     where
         S: Stream<Item = Result<Release, anyhow::Error>>,
     {
-        let mut releases = Vec::new();
+        let mut tasks = FuturesUnordered::new();
         let mut success = true;
-        // We wait until after all releases have been fetched before calling
-        // spawn() in order to properly "cancel" if any errors occur while
-        // fetching.
         tokio::pin!(releaseiter);
         while let Some(r) = releaseiter.next().await {
             match r {
@@ -147,7 +144,13 @@ impl AssetDownloader {
                             rel.tag_name,
                             rel.assets.iter().map(|asset| &asset.name).join(", ")
                         );
-                        releases.push(rel);
+                        for asset in rel.assets {
+                            let downloader = Arc::clone(self);
+                            let tag_name = rel.tag_name.clone();
+                            tasks.push(
+                                async move { downloader.download_asset(&tag_name, asset).await },
+                            );
+                        }
                     } else {
                         info!("Release {} has no assets", rel.tag_name);
                     }
@@ -161,15 +164,6 @@ impl AssetDownloader {
         if !success {
             info!("Not downloading anything due to errors fetching release data");
             return false;
-        }
-        let mut tasks = FuturesUnordered::new();
-        for rel in releases {
-            for asset in &rel.assets {
-                let downloader = Arc::clone(self);
-                let rel = rel.clone();
-                let asset = asset.clone();
-                tasks.push(async move { downloader.download_asset(rel, asset).await });
-            }
         }
         if tasks.is_empty() {
             info!("No assets to download");
@@ -190,7 +184,7 @@ impl AssetDownloader {
         failed == 0
     }
 
-    /// Download the given asset belonging to the given release.
+    /// Download the given asset belonging to the release for the given tag.
     ///
     /// If an error occurs or if the task is cancelled, the download file is
     /// deleted.
@@ -204,13 +198,13 @@ impl AssetDownloader {
     ///   occurs while downloading the body.
     /// - Returns [`StatusError`] if the HTTP response has a 4xx or 5xx status
     ///   code.
-    async fn download_asset(&self, release: Release, asset: Asset) -> anyhow::Result<()> {
-        let parent = self.download_dir.join(&release.tag_name);
+    async fn download_asset(&self, tag: &str, asset: Asset) -> anyhow::Result<()> {
+        let parent = self.download_dir.join(tag);
         let target = parent.join(&asset.name);
         info!(
             "{}: Downloading {} to {}",
-            &release.tag_name,
-            &asset.name,
+            tag,
+            asset.name,
             target.display()
         );
         create_dir_all(&parent)
@@ -224,28 +218,23 @@ impl AssetDownloader {
             .with_context(|| format!("Error opening {}", target.display()))?;
         let mut stream = r.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk
-                .with_context(|| format!("Error reading data from {}", &asset.download_url))?;
+            let chunk =
+                chunk.with_context(|| format!("Error reading data from {}", asset.download_url))?;
             fp.write_all(&chunk)
                 .await
                 .with_context(|| format!("Error writing to {}", target.display()))?;
             downloaded += chunk.len();
             info!(
                 "{}: {}: downloaded {} / {} bytes ({:.2}%)",
-                &release.tag_name,
-                &asset.name,
+                tag,
+                asset.name,
                 downloaded,
-                &asset.size,
+                asset.size,
                 (downloaded as f64) / (asset.size as f64) * 100.0,
             );
         }
         fp.realize();
-        info!(
-            "{}: {} saved to {}",
-            &release.tag_name,
-            &asset.name,
-            target.display()
-        );
+        info!("{}: {} saved to {}", tag, asset.name, target.display());
         Ok(())
     }
 }
