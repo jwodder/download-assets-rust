@@ -1,8 +1,8 @@
 use crate::http_util::{get_next_link, StatusError};
 use crate::potential_file::PotentialFile;
-use crate::task_stream::TaskStream;
 use anyhow::Context;
 use async_stream::try_stream;
+use futures::stream::FuturesUnordered;
 use ghrepo::GHRepo;
 use itertools::Itertools; // for .join()
 use log::{error, info, warn};
@@ -91,12 +91,12 @@ impl AssetDownloader {
         self: &Arc<Self>,
         tags: Vec<String>,
     ) -> impl Stream<Item = Result<Release, anyhow::Error>> {
-        let mut tasks = TaskStream::new(32);
+        let tasks = FuturesUnordered::new();
         for t in tags {
             let downloader = Arc::clone(self);
-            tasks.spawn(async move { downloader.get_release(&t).await });
+            tasks.push(async move { downloader.get_release(&t).await });
         }
-        tasks.into_stream().filter_map(|r| r.transpose())
+        tasks.filter_map(|r| r.transpose())
     }
 
     /// Paginate through the repository's releases and yield each one
@@ -162,13 +162,13 @@ impl AssetDownloader {
             info!("Not downloading anything due to errors fetching release data");
             return false;
         }
-        let mut tasks = TaskStream::new(32);
+        let mut tasks = FuturesUnordered::new();
         for rel in releases {
             for asset in &rel.assets {
                 let downloader = Arc::clone(self);
                 let rel = rel.clone();
                 let asset = asset.clone();
-                tasks.spawn(async move { downloader.download_asset(rel, asset).await });
+                tasks.push(async move { downloader.download_asset(rel, asset).await });
             }
         }
         if tasks.is_empty() {
@@ -177,8 +177,7 @@ impl AssetDownloader {
         }
         let mut downloaded = 0;
         let mut failed = 0;
-        let mut stream = tasks.into_stream();
-        while let Some(r) = stream.next().await {
+        while let Some(r) = tasks.next().await {
             match r {
                 Ok(()) => downloaded += 1,
                 Err(e) => {

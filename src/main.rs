@@ -1,7 +1,6 @@
 mod downloader;
 mod http_util;
 mod potential_file;
-mod task_stream;
 use crate::downloader::AssetDownloader;
 use clap::Parser;
 use ghrepo::GHRepo;

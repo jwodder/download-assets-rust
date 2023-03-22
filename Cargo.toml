@@ -16,6 +16,7 @@ anyhow = "1.0.70"
 async-stream = "0.3.4"
 clap = { version = "4.1.11", default-features = false, features = ["derive", "error-context", "help", "std", "suggestions", "usage", "wrap_help"] }
 fern = "0.6.1"
+futures = "0.3.27"
 ghrepo = "0.4.0"
 indent_write = "2.2.0"
 itertools = "0.10.5"
