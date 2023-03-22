@@ -49,9 +49,13 @@ impl std::error::Error for StatusError {}
 /// Return the `rel="next"` URL, if any, from the response's "Link" header
 pub fn get_next_link(r: &Response) -> Option<String> {
     let header_value = r.headers().get(reqwest::header::LINK)?.to_str().ok()?;
-    parse_link_header::parse_with_rel(header_value)
-        .ok()
-        .and_then(|links| links.get("next").map(|ln| ln.raw_uri.clone()))
+    Some(
+        parse_link_header::parse_with_rel(header_value)
+            .ok()?
+            .get("next")?
+            .raw_uri
+            .clone(),
+    )
 }
 
 /// Returns `true` iff the response's Content-Type header indicates the body is
