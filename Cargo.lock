@@ -149,7 +149,7 @@ dependencies = [
  "fern",
  "futures",
  "ghrepo",
- "indent_write",
+ "indenter",
  "itertools",
  "log",
  "mime",
@@ -472,10 +472,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "indent_write"
-version = "2.2.0"
+name = "indenter"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cfe9645a18782869361d9c8732246be7b410ad4e919d3609ebabdac00ba12c3"
+checksum = "ce23b50ad8242c51a442f3ff322d56b02f08852c77e4c0b4d3fd684abc89c683"
 
 [[package]]
 name = "indexmap"
