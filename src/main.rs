@@ -16,16 +16,15 @@ use tokio_util::either::Either;
 #[derive(Parser)]
 struct Arguments {
     /// Download assets for all releases
-    #[clap(short = 'A', long)]
+    #[arg(short = 'A', long)]
     all: bool,
 
     /// Directory in which to download assets [default: current directory]
-    #[clap(short, long)]
+    #[arg(short, long)]
     download_dir: Option<PathBuf>,
 
     /// The GitHub repository from which to download assets.  Can be specified
     /// as either OWNER/NAME or https://github.com/OWNER/NAME.
-    #[clap(value_parser)]
     repo: GHRepo,
 
     /// The tags of the releases to download.  At least one tag or the --all
