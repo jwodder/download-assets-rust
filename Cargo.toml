@@ -2,7 +2,6 @@
 name = "download-assets"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.61"
 description = "Download GitHub release assets in parallel"
 authors = ["John Thorvald Wodder II <download-assets-rust@varonathe.org>"]
 repository = "https://github.com/jwodder/download-assets-rust"
