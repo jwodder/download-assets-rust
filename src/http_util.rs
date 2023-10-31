@@ -21,10 +21,9 @@ impl StatusError {
             let url = r.url().clone();
             // If the response body is JSON, pretty-print it.
             let body = if is_json_response(&r) {
-                r.json::<Value>()
-                    .await
-                    .ok()
-                    .map(|v| to_string_pretty(&v).unwrap())
+                r.json::<Value>().await.ok().map(|v| {
+                    to_string_pretty(&v).expect("Re-JSONifying a JSON response should not fail")
+                })
             } else {
                 r.text().await.ok()
             };

@@ -41,7 +41,7 @@ async fn main() -> ExitCode {
         .level(LevelFilter::Info)
         .chain(std::io::stderr())
         .apply()
-        .unwrap();
+        .expect("no other logger should have been previously initialized");
     let args = Arguments::parse();
     if args.tags.is_empty() && !args.all {
         eprintln!("No tags specified on command line");
